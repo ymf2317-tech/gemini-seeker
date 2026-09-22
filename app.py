@@ -1,6 +1,7 @@
 """gemini-seeker: Flask 主入口。OpenAI + Anthropic 双协议。"""
 
 import json
+import re
 import logging
 import os
 import time
@@ -54,31 +55,46 @@ def _flatten_content(c):
 
 
 def _messages_to_prompt(messages, tools):
+    MAX_PROMPT_CHARS = 100000
     system_prompt = gprompt.build_system_prompt(tools)
-    parts = [system_prompt, "", "## Recent conversation"]
+    head = [system_prompt, '', '## Recent conversation']
+    body = []
+    # 先收集所有非 system 消息渲染成的行
     for m in messages:
-        role = m.get("role", "")
-        if role == "system":
+        role = m.get('role', '')
+        if role == 'system':
             continue
-        if role == "user":
-            parts.append("user: " + _flatten_content(m.get("content")))
-        elif role == "assistant":
-            tcs = m.get("tool_calls") or []
+        if role == 'user':
+            body.append('user: ' + _flatten_content(m.get('content')))
+        elif role == 'assistant':
+            tcs = m.get('tool_calls') or []
             if tcs:
                 calls = []
                 for tc in tcs:
-                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                    calls.append(fn.get("name") + "(" + str(fn.get("arguments", "{}")) + ")")
-                parts.append("assistant: [calling tools] " + "; ".join(calls))
-            txt = _flatten_content(m.get("content"))
+                    fn = tc.get('function', {}) if isinstance(tc, dict) else {}
+                    calls.append(fn.get('name') + '(' + str(fn.get('arguments', '{}')) + ')')
+                body.append('assistant: [calling tools] ' + '; '.join(calls))
+            txt = _flatten_content(m.get('content'))
             if txt:
-                parts.append("assistant: " + txt)
-        elif role == "tool":
-            name = m.get("name") or m.get("tool_call_id") or "tool"
-            parts.append("tool[" + str(name) + "] result: " + _flatten_content(m.get("content")))
-    parts.append("")
-    parts.append("## Current request")
-    parts.append("Continue based on the tool results above. If you have enough info, reply with content JSON. If you need another tool, reply with tool_calls JSON.")
+                body.append('assistant: ' + txt)
+        elif role == 'tool':
+            name = m.get('name') or m.get('tool_call_id') or 'tool'
+            body.append('tool[' + str(name) + '] result: ' + _flatten_content(m.get('content')))
+    # 从最新往回累加，保证当前问题不丢
+    fixed = chr(10).join(head) + chr(10)
+    budget = MAX_PROMPT_CHARS - len(fixed)
+    kept = []
+    total = 0
+    for line in reversed(body):
+        if total + len(line) + 1 > budget:
+            break
+        kept.append(line)
+        total += len(line) + 1
+    kept.reverse()
+    tail = [chr(10).join(kept), '']
+    tail.append('## Current request')
+    tail.append('Continue based on the tool results above. If you have enough info, reply with content JSON. If you need another tool, reply with tool_calls JSON.')
+    parts = [fixed] + kept + tail
     return chr(10).join(parts)
 
 
@@ -100,21 +116,65 @@ def _run_llm(messages, tools):
     except Exception as e:
         logger.warning("parse failed: %s", e)
         tool_calls, content = [], raw
-    # 纯 JSON 兜底：parser 只管 XML/DSML，不认 {\"content\":..} / {\"tool_calls\":..}
-    if not tool_calls:
-        try:
-            j = json.loads((content or raw).strip())
-            if isinstance(j, dict):
-                if "tool_calls" in j and isinstance(j["tool_calls"], list):
-                    tool_calls = j["tool_calls"]
-                    content = j.get("content", "")
-                elif "content" in j:
-                    content = j.get("content", "")
-        except Exception:
-            pass
+    # 纯 JSON 兜底：parser 只管 XML/DSML，不认 {"content":..} / {"tool_calls":..}
+    content, tool_calls = _strip_json_wrapper(content, raw, tool_calls)
     if not content and not tool_calls:
         content = raw
     return content, tool_calls, raw
+
+
+def _strip_json_wrapper(content, raw, tool_calls):
+    """把 Gemini 吐回来的 {"content": "..."} / {"tool_calls": [...]} 外壳剥掉。
+
+    兼容三种情况：
+    1. 正常 dict：{"content": "..."}
+    2. 字符串形式 JSON：'{"content": "..."}'（json.loads 出来是 str，再 parse 一次）
+    3. JSON 解析失败（转义/换行问题）：用正则抠 content 字段
+    """
+    candidates = []
+    if content:
+        candidates.append(content)
+    if raw and raw not in candidates:
+        candidates.append(raw)
+
+    for cand in candidates:
+        s = (cand or "").strip()
+        if not s:
+            continue
+        if not (s.startswith("{") or s.startswith('"')):
+            continue
+        j = None
+        try:
+            j = json.loads(s)
+        except Exception:
+            j = None
+
+        # 情况 2：解析出来还是 str（外面套了一层引号），再 parse 一次
+        if isinstance(j, str):
+            try:
+                j = json.loads(j.strip())
+            except Exception:
+                j = None
+
+        if isinstance(j, dict):
+            tc = j.get("tool_calls")
+            if isinstance(tc, list) and tc:
+                return j.get("content", "") or "", tc
+            if "content" in j:
+                return str(j.get("content", "") or ""), tool_calls
+
+    # 情况 3：正则兜底抠 {"content": "..."}
+    for cand in candidates:
+        s = (cand or "").strip()
+        m = re.match(r'^\{\s*"content"\s*:\s*"(.*)"\s*\}\s*$', s, re.DOTALL)
+        if m:
+            try:
+                inner = json.loads('"' + m.group(1) + '"')
+            except Exception:
+                inner = m.group(1)
+            return inner, tool_calls
+
+    return content, tool_calls
 
 
 @app.route("/health")
