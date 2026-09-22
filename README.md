@@ -8,8 +8,18 @@
 - 号池：读 `accounts.json`，支持多账号 + 面板热切换（短 TTL 重读）
 - 会话：常驻一个 ChatSession，保留最近 N 轮 history
 
-> ⚠️ 本项目通过逆向 Gemini 网页接口实现，仅供个人学习与自用。
+> ⚠️ 本项目通过**逆向 Gemini 网页接口**实现，仅供**个人学习、研究与自用**。
 > 请遵守 Google 服务条款，不要用于商业或滥用场景。cookie 是你的登录凭证，务必保密。
+
+## ⚠️ Disclaimer / 免责声明
+
+- **仅供研究学习**：本项目用于技术研究与个人学习，**禁止任何商业用途**。
+- **非官方**：与 Google LLC / Alphabet Inc. **无任何关联**，未获官方授权或认可。
+- **可能违反 ToS**：使用逆向的网页 cookie 访问 Gemini 网页端**可能违反 Google 的服务条款**，
+  由此产生的一切后果（包括账号被限制、封禁、数据丢失）由**使用者自行承担**。
+- **风险自负**：本项目按"现状"提供，作者不对任何直接或间接损失负责。
+- **建议**：请优先使用 Google 官方 API（Gemini API）。本项目仅为无法使用官方 API 时的
+  个人替代方案。
 
 ## 原理
 
@@ -56,7 +66,7 @@ gemini-seeker/
 ### 1. 依赖
 
 ```bash
-git clone <repo-url> /root/gemini-seeker
+git clone https://github.com/ymf2317-tech/gemini-seeker.git /root/gemini-seeker
 cd /root/gemini-seeker
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -117,7 +127,7 @@ gemini-webapi>=2.1.1
 
 | 字段 | 值 |
 |---|---|
-| Base URL | `https://your-domain.example` |
+| Base URL | `https://your-domain.example`（换成你自己的域名） |
 | API 路径 | `/v1/chat/completions` |
 | API Key | 你设的 `GEMINI_SEEKER_API_KEY` |
 | 模型名 | 任意（服务忽略，如 `gemini-3.8-flash`） |
@@ -140,4 +150,11 @@ Anthropic 协议端点：`/v1/messages`。
 
 ## License
 
-MIT（`parser.py` 改编自 deeperseeker，发布公开仓库前请确认其 license）。
+**GNU Affero General Public License v3.0 (AGPL-3.0)** —— 见 [LICENSE](LICENSE)。
+
+> 为什么是 AGPL：本项目依赖 `gemini-webapi`（AGPL-3.0），AGPL 具有传染性，
+> 因此本项目整体以 AGPL-3.0 发布。
+>
+> 第三方代码来源：
+> - [`gemini-webapi`](https://github.com/HanaokaYuzu/Gemini-API)（AGPL-3.0）
+> - `parser.py` 的部分解析思路改编自 [`AmanCode22/deeperseeker`](https://github.com/AmanCode22/deeperseeker)（MIT）
