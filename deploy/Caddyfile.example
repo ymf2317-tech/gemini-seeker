@@ -1,0 +1,8 @@
+your-domain.example {
+    handle /health {
+        reverse_proxy 127.0.0.1:4983
+    }
+    handle {
+        reverse_proxy 127.0.0.1:4983
+    }
+}

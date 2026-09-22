@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+logs/
+run.log
+_extracted_parser.py
+accounts.json
+config.local.json
+.env

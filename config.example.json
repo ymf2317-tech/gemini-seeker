@@ -1,0 +1,12 @@
+{
+  "A": {
+    "name": "账号A",
+    "cookies": "__Secure-1PSID=REPLACE_ME; __Secure-1PSIDTS=REPLACE_ME",
+    "auth_user": ""
+  },
+  "B": {
+    "name": "账号B",
+    "cookies": "__Secure-1PSID=REPLACE_ME; __Secure-1PSIDTS=REPLACE_ME",
+    "auth_user": ""
+  }
+}

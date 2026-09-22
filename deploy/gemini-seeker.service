@@ -1,0 +1,17 @@
+[Unit]
+Description=gemini-seeker (Gemini web -> OpenAI/Anthropic bridge)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/gemini-seeker
+Environment=GEMINI_SEEKER_API_KEY=change-me
+Environment=GEMINI_POOL_PATH=/root/gemini-panel/accounts.json
+Environment=GEMINI_POOL_DEFAULT=A
+ExecStart=/root/gemini-seeker/.venv/bin/python /root/gemini-seeker/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
