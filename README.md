@@ -1,89 +1,149 @@
 # gemini-seeker
 
-把 **Gemini 网页版**（gemini.google.com，用你自己的账号 cookie）转成
-**OpenAI / Anthropic 兼容 API** 的轻量桥接服务。
+**English** | [中文](README.zh-CN.md)
 
-- 协议：OpenAI `/v1/chat/completions`（含流式）+ Anthropic `/v1/messages`
-- 工具调用：支持多轮 tool_calls 回传（标准 OpenAI 协议）
-- 号池：读 `accounts.json`，支持多账号 + 面板热切换（短 TTL 重读）
-- 会话：常驻一个 ChatSession，保留最近 N 轮 history
+A lightweight bridge that turns the **Gemini web app** (gemini.google.com, using your own account cookies) into an **OpenAI / Anthropic compatible API**.
 
-> ⚠️ 本项目通过**逆向 Gemini 网页接口**实现，仅供**个人学习、研究与自用**。
-> 请遵守 Google 服务条款，不要用于商业或滥用场景。cookie 是你的登录凭证，务必保密。
+- Protocols: OpenAI `/v1/chat/completions` (incl. streaming) + Anthropic `/v1/messages`
+- Tool calling: multi-turn `tool_calls` passthrough (standard OpenAI protocol)
+- Account pool: reads `accounts.json`, multi-account with hot-switch via web panel (short TTL re-read)
+- Session: one persistent `ChatSession`, keeps the last N history turns
 
-## 解决什么问题 / 优势
+> ⚠️ This project works by **reverse-engineering the Gemini web interface**. For **personal study and self-use only**. Respect Google's Terms of Service; do not use commercially or for abuse. Your cookie is your login credential — keep it secret.
 
-### 为什么不用官方 API？
+## Why use it / What it solves
 
-- 官方 Gemini API 需要**绑卡、开通付费、特定地区**，个人开发者门槛高
-- 官方有 **RPM/RPD 配额限制**，免费额度很小
-- 本项目**用你自己的网页账号**，走网页端的额度（个人日常使用通常够）
+### Why not the official API?
 
-### 相比同类项目，本项目的特色
+- The official Gemini API requires **a credit card, paid plan, and specific regions** — a high bar for individual developers.
+- The official API has **RPM/RPD quota limits**; free quota is small.
+- This project **uses your own web account**, consuming the web-side quota (usually enough for personal daily use).
 
-| 特色 | 说明 |
+### Highlights vs. similar projects
+
+| Feature | Description |
 |---|---|
-| **双协议** | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`，RikkaHub / Cursor / Claude 类客户端都能直连 |
-| **多号池 + 面板热切换** | `accounts.json` 存多账号，Web 面板点一下切号，**不用重启服务** |
-| **工具调用桥接** | 网页端不认 tools 字段，本项目用 prompt 桥接 + 宽容解析，**支持多轮 tool_calls 回传** |
-| **100k prompt 截断** | 防止客户端发超长历史把网页端拖死（同类项目常见坑） |
-| **JSON 剥壳** | 自动剥掉模型返回的 `{"content":...}` 外壳，客户端拿到的就是纯文本 |
-| **单文件部署** | Flask + venv，systemd 一键起，无数据库、无额外负担 |
+| **Dual protocol** | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`; works with RikkaHub / Cursor / Claude-style clients |
+| **Account pool + hot switch** | Multiple accounts in `accounts.json`; switch with one click on the web panel, **no service restart** |
+| **Tool-calling bridge** | The web endpoint doesn't understand the `tools` field; this project bridges via prompt + lenient parsing, **supports multi-turn `tool_calls`** |
+| **100k prompt truncation** | Prevents overly long client history from stalling the web endpoint (a common pitfall in similar projects) |
+| **JSON unwrapping** | Automatically strips the model's `{"content":...}` wrapper so clients receive plain text |
+| **Single-file deploy** | Flask + venv, one systemd unit; no database, no extra baggage |
 
+## ⚠️ Disclaimer
 
-## ⚠️ Disclaimer / 免责声明
+- **For study/research only**: this project is for technical research and personal learning; **commercial use is prohibited**.
+- **Unofficial**: no affiliation with Google LLC / Alphabet Inc.; not authorized or endorsed by them.
+- **May violate ToS**: accessing the Gemini web endpoint with reverse-engineered cookies **may violate Google's Terms of Service**. Any consequences (account restriction, ban, data loss) are **borne by the user**.
+- **Use at your own risk**: provided "as is"; the author is not liable for any direct or indirect loss.
+- **Recommendation**: prefer the official Gemini API. This project is only a personal fallback when the official API is unavailable.
 
-- **仅供研究学习**：本项目用于技术研究与个人学习，**禁止任何商业用途**。
-- **非官方**：与 Google LLC / Alphabet Inc. **无任何关联**，未获官方授权或认可。
-- **可能违反 ToS**：使用逆向的网页 cookie 访问 Gemini 网页端**可能违反 Google 的服务条款**，
-  由此产生的一切后果（包括账号被限制、封禁、数据丢失）由**使用者自行承担**。
-- **风险自负**：本项目按"现状"提供，作者不对任何直接或间接损失负责。
-- **建议**：请优先使用 Google 官方 API（Gemini API）。本项目仅为无法使用官方 API 时的
-  个人替代方案。
-
-## 原理
+## How it works
 
 ```
-客户端(OpenAI/Anthropic 协议)
+Client (OpenAI/Anthropic protocol)
         │
         ▼
-   app.py (Flask)          ← 解析 messages / tools，拼 prompt
+   app.py (Flask)          ← parse messages / tools, build prompt
         │
         ▼
-  gemini_seeker/session.py  ← gemini_webapi 常驻 ChatSession + 线程锁
+  gemini_seeker/session.py  ← gemini_webapi persistent ChatSession + thread lock
         │
         ▼
-  gemini_seeker/pool.py     ← 读 accounts.json 拿 cookie
+  gemini_seeker/pool.py     ← read accounts.json for cookies
         │
         ▼
    gemini_webapi  →  gemini.google.com
 ```
 
-Gemini 网页端不认原生 tools 字段，所以用「prompt 桥接」：把工具定义写进 system prompt，
-要求模型只输出 JSON（`{"tool_calls":[...]}` 或 `{"content":"..."}`），
-`parser.py` 再把模型输出宽容地解析回标准格式。
+The Gemini web endpoint doesn't accept a native `tools` field, so we use a **prompt bridge**: write the tool definitions into the system prompt and ask the model to output JSON only (`{"tool_calls":[...]}` or `{"content":"..."}`). `parser.py` then leniently parses the model output back into the standard format.
 
-## 目录结构
+## Project layout
 
 ```
 gemini-seeker/
-├── app.py                  # Flask 主入口
+├── app.py                  # Flask entry
 ├── requirements.txt
 ├── gemini_seeker/
 │   ├── __init__.py
-│   ├── pool.py             # 账号池读取
-│   ├── session.py          # client + 常驻会话 + 锁
-│   ├── prompt.py           # 工具桥接 prompt
-│   └── parser.py           # 宽容解析模型输出
+│   ├── pool.py             # account pool reader
+│   ├── session.py          # client + persistent session + lock
+│   ├── prompt.py           # tool-bridge prompt
+│   └── parser.py           # lenient model-output parser
 ├── deploy/
 │   ├── gemini-seeker.service
 │   └── Caddyfile.example
-└── config.example.json     # accounts.json 示例
+└── config.example.json     # accounts.json example
 ```
 
-## 安装
+## Quick start (running in 5 minutes)
 
-### 1. 依赖
+> Prerequisite: a Linux server (or local machine) that can reach `gemini.google.com`.
+
+**Step 1. Get your cookies (the crucial step)**
+
+Install the **Cookie-Editor** extension in your browser (Chrome / Edge / Firefox stores), then:
+
+1. Log in to https://gemini.google.com
+2. Click the Cookie-Editor icon → **Export as JSON** (do NOT use F12 `document.cookie` — it cannot read `HttpOnly` cookies)
+3. From the exported JSON, find these two values:
+   - `__Secure-1PSID` (starts with `g.a000...`)
+   - `__Secure-1PSIDTS` (starts with `AKEyXz...` or `sidts-...`)
+
+Join them into one line: `__Secure-1PSID=g.a000...; __Secure-1PSIDTS=AKEyXz...`
+
+**Step 2. Install**
+
+```bash
+git clone https://github.com/ymf2317-tech/gemini-seeker.git
+cd gemini-seeker
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+**Step 3. Write the account pool**
+
+```bash
+mkdir -p /root/gemini-panel
+cat > /root/gemini-panel/accounts.json <<'EOF'
+{
+  "A": {
+    "name": "my account",
+    "cookies": "__Secure-1PSID=<paste Step 1 value>; __Secure-1PSIDTS=<paste Step 1 value>",
+    "auth_user": ""
+  }
+}
+EOF
+```
+
+**Step 4. Run**
+
+```bash
+.venv/bin/python app.py
+```
+
+If you see `* Running on http://0.0.0.0:4983`, it's up.
+
+**Step 5. Verify**
+
+```bash
+curl -s localhost:4983/health
+# {"ok":true,...} means OK
+
+curl -s -X POST localhost:4983/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gemini","messages":[{"role":"user","content":"hello"}]}'
+```
+
+**Step 6. Connect a client**
+
+Put `http://<your-server-ip>:4983` into RikkaHub / any OpenAI client (see "Client setup" below).
+
+> For production, use systemd + Caddy reverse proxy (HTTPS). Templates are in `deploy/`.
+
+## Installation
+
+### 1. Dependencies
 
 ```bash
 git clone https://github.com/ymf2317-tech/gemini-seeker.git /root/gemini-seeker
@@ -92,7 +152,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-`requirements.txt`：
+`requirements.txt`:
 
 ```
 flask>=3.0
@@ -100,81 +160,78 @@ requests>=2.31
 gemini-webapi>=2.1.1
 ```
 
-### 2. 账号池 `accounts.json`
+### 2. Account pool `accounts.json`
 
-放在项目根目录（默认路径 `/root/gemini-panel/accounts.json`，可用环境变量 `GEMINI_POOL_PATH` 改）。
+Placed in the project root (default path `/root/gemini-panel/accounts.json`, changeable via env var `GEMINI_POOL_PATH`).
 
 ```json
 {
   "A": {
-    "name": "账号A",
+    "name": "account A",
     "cookies": "__Secure-1PSID=g.a000...; __Secure-1PSIDTS=sidts...",
     "auth_user": ""
   },
   "B": {
-    "name": "账号B",
+    "name": "account B",
     "cookies": "__Secure-1PSID=g.a000...; __Secure-1PSIDTS=sidts...",
     "auth_user": ""
   }
 }
 ```
 
-**怎么拿 cookie**：浏览器登录 gemini.google.com → F12 → Application → Cookies →
-复制 `__Secure-1PSID` 和 `__Secure-1PSIDTS` 两个值，拼成 `key=value; key=value` 格式。
+**How to get cookies**: log in to gemini.google.com in a browser → F12 → Application → Cookies → copy the `__Secure-1PSID` and `__Secure-1PSIDTS` values, joined as `key=value; key=value`.
 
-> cookie 会过期。一旦日志出现 `Account status: UNAUTHENTICATED`，响应会变得极慢（库走降级慢路径），
-> 需要重新登录、更新 cookie。
+> Cookies expire. Once the log shows `Account status: UNAUTHENTICATED`, responses become extremely slow (the library falls back to a degraded path). Re-login and update the cookie.
 
-### 3. 环境变量
+### 3. Environment variables
 
-| 变量 | 默认 | 说明 |
+| Variable | Default | Description |
 |---|---|---|
-| `GEMINI_SEEKER_API_KEY` | 空 | 客户端鉴权 key；空则不校验 |
-| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | 保留最近几轮 history |
-| `GEMINI_POOL_PATH` | `/root/gemini-panel/accounts.json` | 账号池路径 |
-| `GEMINI_POOL_DEFAULT` | `A` | 默认用哪个号 |
-| `GEMINI_POOL_TTL` | 3 | 账号池缓存秒数 |
+| `GEMINI_SEEKER_API_KEY` | empty | Client auth key; empty means no auth |
+| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | Number of recent history turns to keep |
+| `GEMINI_POOL_PATH` | `/root/gemini-panel/accounts.json` | Account pool path |
+| `GEMINI_POOL_DEFAULT` | `A` | Which account to use by default |
+| `GEMINI_POOL_TTL` | 3 | Account pool cache TTL (seconds) |
 
-### 4. 启动
+### 4. Run
 
 ```bash
-.venv/bin/python app.py        # 监听 0.0.0.0:4983
+.venv/bin/python app.py        # listens on 0.0.0.0:4983
 ```
 
-或直接用 systemd（见 `deploy/`）。
+Or use systemd directly (see `deploy/`).
 
-## 客户端接入（RikkaHub / 任意 OpenAI 客户端）
+## Client setup (RikkaHub / any OpenAI client)
 
-| 字段 | 值 |
+| Field | Value |
 |---|---|
-| Base URL | `https://your-domain.example`（换成你自己的域名） |
-| API 路径 | `/v1/chat/completions` |
-| API Key | 你设的 `GEMINI_SEEKER_API_KEY` |
-| 模型名 | 任意（服务忽略，如 `gemini-3.8-flash`） |
+| Base URL | `https://your-domain.example` (replace with your own domain) |
+| API path | `/v1/chat/completions` |
+| API Key | the `GEMINI_SEEKER_API_KEY` you set |
+| Model name | anything (ignored by the service, e.g. `gemini-3.8-flash`) |
 
-> 注意路径要带 `/v1`。有的客户端 Base URL 里已含 `/v1`，此时路径填 `/chat/completions`。
+> Note the path must include `/v1`. Some clients already include `/v1` in the Base URL; in that case the path is `/chat/completions`.
 
-Anthropic 协议端点：`/v1/messages`。
+Anthropic protocol endpoint: `/v1/messages`.
 
-## 接口
+## Endpoints
 
-- `GET /health` — 健康检查，返回当前账号/会话状态
-- `POST /v1/chat/completions` — OpenAI 协议（支持 `stream`）
-- `POST /v1/messages` — Anthropic 协议
+- `GET /health` — health check, returns current account/session state
+- `POST /v1/chat/completions` — OpenAI protocol (supports `stream`)
+- `POST /v1/messages` — Anthropic protocol
 
-## 已知现象
+## Known behavior
 
-- **cookie 失效 → 极慢**：库走降级路径，一次要等几十秒。刷新 cookie 即恢复。
-- **并发**：同一时刻只允许一个请求进会话（已加锁）；客户端并发多发时其余会排队。
-- **usage 字段**：token 统计为 0（未实现），不影响功能。
+- **Cookie expiry → very slow**: the library falls back to a degraded path, each request may take tens of seconds. Refreshing the cookie restores it.
+- **Concurrency**: only one request enters the session at a time (lock); extra concurrent client requests queue up.
+- **usage field**: token counts are 0 (not implemented); does not affect functionality.
 
 ## License
 
-**GNU Affero General Public License v3.0 (AGPL-3.0)** —— 见 [LICENSE](LICENSE)。
+**GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE).
 
-> 为什么是 AGPL：本项目依赖 `gemini-webapi`（AGPL-3.0），AGPL 具有传染性，
-> 因此本项目整体以 AGPL-3.0 发布。
+> Why AGPL: this project depends on `gemini-webapi` (AGPL-3.0). AGPL is viral, so the whole project is released under AGPL-3.0.
 >
-> 第三方代码来源：
-> - [`gemini-webapi`](https://github.com/HanaokaYuzu/Gemini-API)（AGPL-3.0）
-> - `parser.py` 的部分解析思路改编自 [`AmanCode22/deeperseeker`](https://github.com/AmanCode22/deeperseeker)（MIT）
+> Third-party sources:
+> - [`gemini-webapi`](https://github.com/HanaokaYuzu/Gemini-API) (AGPL-3.0)
+> - Part of `parser.py`'s parsing approach is adapted from [`AmanCode22/deeperseeker`](https://github.com/AmanCode22/deeperseeker) (MIT)
