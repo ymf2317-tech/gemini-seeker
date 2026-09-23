@@ -217,7 +217,7 @@ gemini-webapi>=2.1.1
 | Base URL | `https://your-domain.example`（换成你自己的域名） |
 | API 路径 | `/v1/chat/completions` |
 | API Key | 你设的 `GEMINI_SEEKER_API_KEY` |
-| 模型名 | 任意（服务忽略，如 `gemini-3.8-flash`） |
+| 模型名 | `gemini-pro` / `gemini-flash` / `gemini-flash-lite`（**已真正透传**；简写 `pro`/`flash`/`lite` 也可） |
 
 > 注意路径要带 `/v1`。有的客户端 Base URL 里已含 `/v1`，此时路径填 `/chat/completions`。
 
@@ -225,7 +225,8 @@ Anthropic 协议端点：`/v1/messages`。
 
 ## 接口
 
-- `GET /health` — 健康检查，返回当前账号/会话状态
+- `GET /health` — 健康检查，返回当前账号/会话状态（含 `current_model`）
+- `GET /v1/models` — 实时拉取当前账号可用模型列表
 - `POST /v1/chat/completions` — OpenAI 协议（支持 `stream`）
 - `POST /v1/messages` — Anthropic 协议
 

@@ -208,7 +208,7 @@ Or use systemd directly (see `deploy/`).
 | Base URL | `https://your-domain.example` (replace with your own domain) |
 | API path | `/v1/chat/completions` |
 | API Key | the `GEMINI_SEEKER_API_KEY` you set |
-| Model name | anything (ignored by the service, e.g. `gemini-3.8-flash`) |
+| Model name | `gemini-pro` / `gemini-flash` / `gemini-flash-lite` (real pass-through; short forms `pro`/`flash`/`lite` also work) |
 
 > Note the path must include `/v1`. Some clients already include `/v1` in the Base URL; in that case the path is `/chat/completions`.
 
@@ -216,7 +216,8 @@ Anthropic protocol endpoint: `/v1/messages`.
 
 ## Endpoints
 
-- `GET /health` — health check, returns current account/session state
+- `GET /health` — health check, returns current account/session state (includes `current_model`)
+- `GET /v1/models` — live list of models available to the current account
 - `POST /v1/chat/completions` — OpenAI protocol (supports `stream`)
 - `POST /v1/messages` — Anthropic protocol
 
