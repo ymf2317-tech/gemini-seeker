@@ -95,13 +95,13 @@ def ensure_ready(model_name=None):
 _send_lock = threading.Lock()
 
 
-def send(prompt, timeout=300, model=None):
+def send(prompt, timeout=300, model=None, files=None):
     # 串行化：同一个 ChatSession 不能并发灌多条，否则 Gemini 端会串轮次
     with _send_lock:
         session, key = ensure_ready(model_name=model)
 
         async def _do():
-            return await session.send_message(prompt)
+            return await session.send_message(prompt, files=files)
 
         resp = _run_coro(_do(), timeout=timeout)
         text = getattr(resp, "text", None)

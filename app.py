@@ -1,11 +1,13 @@
 """gemini-seeker: Flask 主入口。OpenAI + Anthropic 双协议。"""
 
+import base64
 import json
 import re
 import logging
 import os
 import time
 import uuid
+import urllib.request
 
 from flask import Flask, Response, jsonify, request, stream_with_context
 
@@ -50,9 +52,99 @@ def _extract_user_text(messages):
 
 def _flatten_content(c):
     if isinstance(c, list):
-        return " ".join(p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text")
+        out = []
+        for p in c:
+            if not isinstance(p, dict):
+                continue
+            t = p.get("type")
+            if t == "text":
+                out.append(p.get("text", ""))
+            elif t in ("image_url", "image"):
+                out.append("[image attached]")
+        return " ".join(out)
     return c or ""
 
+
+def _guess_ext(s):
+    """从 data URL 的 mime 或 http URL 后缀推断扩展名。"""
+    s = (s or "").lower()
+    if "image/png" in s: return ".png"
+    if "image/jpeg" in s or "image/jpg" in s: return ".jpg"
+    if "image/gif" in s: return ".gif"
+    if "image/webp" in s: return ".webp"
+    if "image/bmp" in s: return ".bmp"
+    if ".png" in s: return ".png"
+    if ".jpg" in s or ".jpeg" in s: return ".jpg"
+    if ".gif" in s: return ".gif"
+    if ".webp" in s: return ".webp"
+    return ".png"
+
+
+def _data_url_to_bytes(url):
+    """data:image/...;base64,xxx 或 http(s) URL -> (bytes, ext)。失败返回 (None, None)。"""
+    if not url:
+        return None, None
+    if url.startswith("data:"):
+        try:
+            head, b64 = url.split(",", 1)
+            ext = _guess_ext(head)
+            if ";base64" in head:
+                return base64.b64decode(b64), ext
+            return b64.encode("utf-8"), ext
+        except Exception:
+            return None, None
+    if url.startswith("http://") or url.startswith("https://"):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "gemini-seeker"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read(), _guess_ext(url)
+        except Exception as e:
+            logger.warning("fetch image failed: %s", e)
+            return None, None
+    return None, None
+
+def _extract_images(messages, max_images=10):
+    """把请求里的图片抠出来，落成带正确扩展名的临时文件，返回路径列表。
+
+    关键：库的 upload_file 对 bytes/BytesIO 只生成随机文件名（无扩展名），
+    mimetypes 猜不出类型 -> application/octet-stream -> Gemini 不识别为图片。
+    所以必须落成带 .png/.jpg 的真文件再传。
+    """
+    import tempfile
+    files = []
+    tmpdir = tempfile.mkdtemp(prefix="gseeker_img_")
+    for m in messages:
+        c = m.get("content")
+        if not isinstance(c, list):
+            continue
+        for p in c:
+            if not isinstance(p, dict) or len(files) >= max_images:
+                continue
+            t = p.get("type")
+            data, ext = None, None
+            if t == "image_url":
+                iu = p.get("image_url") or {}
+                url = iu.get("url") if isinstance(iu, dict) else iu
+                data, ext = _data_url_to_bytes(url)
+            elif t == "image":
+                src = p.get("source") or {}
+                if isinstance(src, dict) and src.get("type") == "base64":
+                    try:
+                        data = base64.b64decode(src.get("data", ""))
+                        ext = "." + (src.get("media_type", "image/png").split("/")[-1])
+                    except Exception:
+                        data = None
+            if data:
+                path = os.path.join(tmpdir, "img_%d%s" % (len(files), ext or ".png"))
+                try:
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    files.append(path)
+                except Exception as e:
+                    logger.warning("write temp image failed: %s", e)
+    if files:
+        logger.info("extracted %d image(s) -> temp files in %s", len(files), tmpdir)
+    return files
 
 def _messages_to_prompt(messages, tools):
     MAX_PROMPT_CHARS = 100000
@@ -98,10 +190,16 @@ def _messages_to_prompt(messages, tools):
     return chr(10).join(parts)
 
 
-def _run_llm(messages, tools, model=None):
+def _run_llm(messages, tools, model=None, files=None):
     full_prompt = _messages_to_prompt(messages, tools)
-    logger.info("sending (msgs=%d, prompt_len=%d, model=%r)", len(messages), len(full_prompt), model)
-    raw, key = gsession.send(full_prompt, model=model)
+    logger.info("sending (msgs=%d, prompt_len=%d, model=%r, files=%d)", len(messages), len(full_prompt), model, len(files or []))
+    try:
+        raw, key = gsession.send(full_prompt, model=model, files=files)
+    finally:
+        if files:
+            for _p in files:
+                try: os.remove(_p)
+                except Exception: pass
     logger.info("reply (account=%s, raw_len=%d)", key, len(raw))
     try:
         from gemini_seeker import parser as _parser
@@ -123,6 +221,18 @@ def _run_llm(messages, tools, model=None):
     return content, tool_calls, raw
 
 
+def _strip_code_fence(s):
+    """Pro 有时把 JSON 包在代码围栏里，先剥掉围栏再解析。"""
+    if not s or not s.startswith("```"):
+        return s
+    lines = s.split(chr(10))
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return chr(10).join(lines).strip()
+
+
 def _strip_json_wrapper(content, raw, tool_calls):
     """把 Gemini 吐回来的 {"content": "..."} / {"tool_calls": [...]} 外壳剥掉。
 
@@ -141,6 +251,7 @@ def _strip_json_wrapper(content, raw, tool_calls):
         s = (cand or "").strip()
         if not s:
             continue
+        s = _strip_code_fence(s)
         if not (s.startswith("{") or s.startswith('"')):
             continue
         j = None
@@ -165,7 +276,7 @@ def _strip_json_wrapper(content, raw, tool_calls):
 
     # 情况 3：正则兜底抠 {"content": "..."}
     for cand in candidates:
-        s = (cand or "").strip()
+        s = _strip_code_fence((cand or "").strip())
         m = re.match(r'^\{\s*"content"\s*:\s*"(.*)"\s*\}\s*$', s, re.DOTALL)
         if m:
             try:
@@ -216,7 +327,7 @@ def chat_completions():
     model = body.get("model", "gemini-3.8-flash")
     user_text = _extract_user_text(messages)
     try:
-        content, tool_calls, raw = _run_llm(messages, tools, model=model)
+        content, tool_calls, raw = _run_llm(messages, tools, model=model, files=_extract_images(messages))
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"error": {"message": str(e), "type": "upstream_error"}}), 502
@@ -253,7 +364,7 @@ def anthropic_messages():
     openai_tools = [{"type": "function", "function": {"name": t.get("name"), "description": t.get("description", ""), "parameters": t.get("input_schema", {})}} for t in tools]
     user_text = _extract_user_text(messages)
     try:
-        content, tool_calls, raw = _run_llm(messages, openai_tools, model=body.get("model"))
+        content, tool_calls, raw = _run_llm(messages, openai_tools, model=body.get("model"), files=_extract_images(messages))
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"type": "error", "error": {"type": "api_error", "message": str(e)}}), 502
