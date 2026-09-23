@@ -98,10 +98,10 @@ def _messages_to_prompt(messages, tools):
     return chr(10).join(parts)
 
 
-def _run_llm(messages, tools):
+def _run_llm(messages, tools, model=None):
     full_prompt = _messages_to_prompt(messages, tools)
-    logger.info("sending (msgs=%d, prompt_len=%d)", len(messages), len(full_prompt))
-    raw, key = gsession.send(full_prompt)
+    logger.info("sending (msgs=%d, prompt_len=%d, model=%r)", len(messages), len(full_prompt), model)
+    raw, key = gsession.send(full_prompt, model=model)
     logger.info("reply (account=%s, raw_len=%d)", key, len(raw))
     try:
         from gemini_seeker import parser as _parser
@@ -177,6 +177,24 @@ def _strip_json_wrapper(content, raw, tool_calls):
     return content, tool_calls
 
 
+@app.route("/v1/models")
+def list_models_endpoint():
+    if not _check_auth():
+        return jsonify({"error": {"message": "unauthorized", "type": "auth_error"}}), 401
+    try:
+        models = gsession.list_models()
+    except Exception as e:
+        logger.exception("list_models failed")
+        return jsonify({"error": {"message": str(e), "type": "upstream_error"}}), 502
+    now = int(time.time())
+    data = [
+        {"id": getattr(m, "model_name", None) or "unknown",
+         "object": "model", "created": now, "owned_by": "gemini-web"}
+        for m in models if getattr(m, "is_available", True)
+    ]
+    return jsonify({"object": "list", "data": data})
+
+
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "time": time.time(), **gsession.status()})
@@ -198,7 +216,7 @@ def chat_completions():
     model = body.get("model", "gemini-3.8-flash")
     user_text = _extract_user_text(messages)
     try:
-        content, tool_calls, raw = _run_llm(messages, tools)
+        content, tool_calls, raw = _run_llm(messages, tools, model=model)
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"error": {"message": str(e), "type": "upstream_error"}}), 502
@@ -235,7 +253,7 @@ def anthropic_messages():
     openai_tools = [{"type": "function", "function": {"name": t.get("name"), "description": t.get("description", ""), "parameters": t.get("input_schema", {})}} for t in tools]
     user_text = _extract_user_text(messages)
     try:
-        content, tool_calls, raw = _run_llm(messages, openai_tools)
+        content, tool_calls, raw = _run_llm(messages, openai_tools, model=body.get("model"))
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"type": "error", "error": {"type": "api_error", "message": str(e)}}), 502
