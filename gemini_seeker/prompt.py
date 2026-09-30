@@ -27,15 +27,3 @@ def build_tools_block(tools):
 
 def build_system_prompt(tools):
     return SYSTEM_TEMPLATE.format(tools=build_tools_block(tools))
-
-
-def build_turn_prompt(system_prompt, recent_turns, user_text):
-    parts = [system_prompt, ""]
-    if recent_turns:
-        parts.append("## Recent conversation")
-        for role, text in recent_turns:
-            parts.append(f"{role}: {text}")
-        parts.append("")
-    parts.append("## Current request")
-    parts.append(user_text)
-    return "\n".join(parts)

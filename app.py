@@ -21,7 +21,6 @@ app = Flask(__name__)
 
 API_KEY = os.environ.get("GEMINI_SEEKER_API_KEY", "")
 HISTORY_TURNS = int(os.environ.get("GEMINI_SEEKER_HISTORY_TURNS", "3"))
-_history = []
 
 
 def _check_auth():
@@ -31,23 +30,6 @@ def _check_auth():
     xkey = request.headers.get("x-api-key", "")
     token = auth[7:].strip() if auth.startswith("Bearer ") else (xkey.strip() if xkey else "")
     return token == API_KEY
-
-
-def _append_history(role, text):
-    _history.append((role, text))
-    max_msgs = HISTORY_TURNS * 2
-    if len(_history) > max_msgs:
-        del _history[: len(_history) - max_msgs]
-
-
-def _extract_user_text(messages):
-    for m in reversed(messages):
-        if m.get("role") == "user":
-            c = m.get("content", "")
-            if isinstance(c, list):
-                return " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-            return c
-    return ""
 
 
 def _flatten_content(c):
@@ -329,14 +311,11 @@ def chat_completions():
     tools = body.get("tools") or []
     stream = bool(body.get("stream"))
     model = body.get("model", "gemini-3.8-flash")
-    user_text = _extract_user_text(messages)
     try:
         content, tool_calls, raw = _run_llm(messages, tools, model=model, files=_extract_images(messages))
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"error": {"message": str(e), "type": "upstream_error"}}), 502
-    _append_history("user", user_text)
-    _append_history("assistant", content or raw)
     if not stream:
         msg = {"role": "assistant", "content": content or None}
         if tool_calls:
@@ -366,14 +345,11 @@ def anthropic_messages():
     messages = body.get("messages", [])
     tools = body.get("tools") or []
     openai_tools = [{"type": "function", "function": {"name": t.get("name"), "description": t.get("description", ""), "parameters": t.get("input_schema", {})}} for t in tools]
-    user_text = _extract_user_text(messages)
     try:
         content, tool_calls, raw = _run_llm(messages, openai_tools, model=body.get("model"), files=_extract_images(messages))
     except Exception as e:
         logger.exception("llm failed")
         return jsonify({"type": "error", "error": {"type": "api_error", "message": str(e)}}), 502
-    _append_history("user", user_text)
-    _append_history("assistant", content or raw)
     blocks = []
     if content:
         blocks.append({"type": "text", "text": content})
