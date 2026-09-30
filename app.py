@@ -148,14 +148,19 @@ def _extract_images(messages, max_images=10):
 
 def _messages_to_prompt(messages, tools):
     MAX_PROMPT_CHARS = 100000
+    # 只保留最近 HISTORY_TURNS 轮（一轮 = 一条 user 消息及其之后到下一轮之前的所有消息）。
+    # 更早的上下文交给常驻会话的服务器端记忆，避免每轮把全历史重塞。
+    # 以 user 消息为切点，保证不会把一轮工具调用从中切开。
+    non_system = [m for m in messages if m.get('role', '') != 'system']
+    user_positions = [i for i, m in enumerate(non_system) if m.get('role') == 'user']
+    if HISTORY_TURNS > 0 and len(user_positions) > HISTORY_TURNS:
+        non_system = non_system[user_positions[-HISTORY_TURNS]:]
+
     system_prompt = gprompt.build_system_prompt(tools)
     head = [system_prompt, '', '## Recent conversation']
     body = []
-    # 先收集所有非 system 消息渲染成的行
-    for m in messages:
+    for m in non_system:
         role = m.get('role', '')
-        if role == 'system':
-            continue
         if role == 'user':
             body.append('user: ' + _flatten_content(m.get('content')))
         elif role == 'assistant':
@@ -172,7 +177,7 @@ def _messages_to_prompt(messages, tools):
         elif role == 'tool':
             name = m.get('name') or m.get('tool_call_id') or 'tool'
             body.append('tool[' + str(name) + '] result: ' + _flatten_content(m.get('content')))
-    # 从最新往回累加，保证当前问题不丢
+    # char 上限仅作兜底（单轮超大工具结果时仍保护）
     fixed = chr(10).join(head) + chr(10)
     budget = MAX_PROMPT_CHARS - len(fixed)
     kept = []
@@ -183,10 +188,9 @@ def _messages_to_prompt(messages, tools):
         kept.append(line)
         total += len(line) + 1
     kept.reverse()
-    tail = [chr(10).join(kept), '']
-    tail.append('## Current request')
-    tail.append('Continue based on the tool results above. If you have enough info, reply with content JSON. If you need another tool, reply with tool_calls JSON.')
-    parts = [fixed] + kept + tail
+    # 注意：kept 只出现一次（旧版 parts=[fixed]+kept+tail 且 tail[0]=join(kept)，导致对话块重复两遍）
+    parts = [fixed, chr(10).join(kept), '', '## Current request',
+             'Continue based on the tool results above. If you have enough info, reply with content JSON. If you need another tool, reply with tool_calls JSON.']
     return chr(10).join(parts)
 
 
