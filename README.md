@@ -7,7 +7,8 @@ A lightweight bridge that turns the **Gemini web app** (gemini.google.com, using
 - Protocols: OpenAI `/v1/chat/completions` (incl. streaming) + Anthropic `/v1/messages`
 - Tool calling: multi-turn `tool_calls` passthrough (standard OpenAI protocol)
 - Account pool: reads `accounts.json`, multi-account with hot-switch via web panel (short TTL re-read)
-- Session: one persistent `ChatSession`, keeps the last N history turns
+- Session: one persistent `ChatSession`; the prompt carries only the last N turns
+- Image input: OpenAI `image_url` / Anthropic `image` blocks are passed through to Gemini
 
 > ⚠️ This project works by **reverse-engineering the Gemini web interface**. For **personal study and self-use only**. Respect Google's Terms of Service; do not use commercially or for abuse. Your cookie is your login credential — keep it secret.
 
@@ -26,7 +27,8 @@ A lightweight bridge that turns the **Gemini web app** (gemini.google.com, using
 | **Dual protocol** | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`; works with RikkaHub / Cursor / Claude-style clients |
 | **Account pool + hot switch** | Multiple accounts in `accounts.json`; switch with one click on the web panel, **no service restart** |
 | **Tool-calling bridge** | The web endpoint doesn't understand the `tools` field; this project bridges via prompt + lenient parsing, **supports multi-turn `tool_calls`** |
-| **100k prompt truncation** | Prevents overly long client history from stalling the web endpoint (a common pitfall in similar projects) |
+| **Recent-turn windowing** | Only the last N turns (`GEMINI_SEEKER_HISTORY_TURNS`, default 3) are folded into the prompt; older context stays in the persistent server-side session — smaller prompts, more coherent context (supersedes the old 100k truncation) |
+| **Image input** | Passes image blocks through to Gemini: OpenAI `image_url` / Anthropic `image` formats, incl. data URLs and http(s) links |
 | **JSON unwrapping** | Automatically strips the model's `{"content":...}` wrapper so clients receive plain text |
 | **Single-file deploy** | Flask + venv, one systemd unit; no database, no extra baggage |
 
@@ -188,7 +190,7 @@ Placed in the project root (default path `/root/gemini-panel/accounts.json`, cha
 | Variable | Default | Description |
 |---|---|---|
 | `GEMINI_SEEKER_API_KEY` | empty | Client auth key; empty means no auth |
-| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | Number of recent history turns to keep |
+| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | How many recent user-turns are folded into the prompt (older context stays in the server-side session) |
 | `GEMINI_POOL_PATH` | `/root/gemini-panel/accounts.json` | Account pool path |
 | `GEMINI_POOL_DEFAULT` | `A` | Which account to use by default |
 | `GEMINI_POOL_TTL` | 3 | Account pool cache TTL (seconds) |
@@ -226,6 +228,7 @@ Anthropic protocol endpoint: `/v1/messages`.
 - **Cookie expiry → very slow**: the library falls back to a degraded path, each request may take tens of seconds. Refreshing the cookie restores it.
 - **Concurrency**: only one request enters the session at a time (lock); extra concurrent client requests queue up.
 - **usage field**: token counts are 0 (not implemented); does not affect functionality.
+- **Image input**: supported (OpenAI `image_url` / Anthropic `image`). Gemini may not recognize tiny or solid-color images (e.g. 1x1) — that is expected.
 
 ## License
 

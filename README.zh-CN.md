@@ -8,7 +8,8 @@
 - 协议：OpenAI `/v1/chat/completions`（含流式）+ Anthropic `/v1/messages`
 - 工具调用：支持多轮 tool_calls 回传（标准 OpenAI 协议）
 - 号池：读 `accounts.json`，支持多账号 + 面板热切换（短 TTL 重读）
-- 会话：常驻一个 ChatSession，保留最近 N 轮 history
+- 会话：常驻一个 ChatSession；prompt 只带最近 N 轮
+- 图片：支持 OpenAI `image_url` / Anthropic `image` 块，直通 Gemini
 
 > ⚠️ 本项目通过**逆向 Gemini 网页接口**实现，仅供**个人学习、研究与自用**。
 > 请遵守 Google 服务条款，不要用于商业或滥用场景。cookie 是你的登录凭证，务必保密。
@@ -28,7 +29,8 @@
 | **双协议** | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`，RikkaHub / Cursor / Claude 类客户端都能直连 |
 | **多号池 + 面板热切换** | `accounts.json` 存多账号，Web 面板点一下切号，**不用重启服务** |
 | **工具调用桥接** | 网页端不认 tools 字段，本项目用 prompt 桥接 + 宽容解析，**支持多轮 tool_calls 回传** |
-| **100k prompt 截断** | 防止客户端发超长历史把网页端拖死（同类项目常见坑） |
+| **轮次窗口** | 只把最近 N 轮（`GEMINI_SEEKER_HISTORY_TURNS`，默认 3）折进 prompt，更早的留给常驻会话——prompt 更短、上下文更连贯（取代旧的 100k 截断） |
+| **图片输入** | 支持把图片传给 Gemini：OpenAI `image_url` / Anthropic `image` 格式，含 data URL 与 http(s) 链接 |
 | **JSON 剥壳** | 自动剥掉模型返回的 `{"content":...}` 外壳，客户端拿到的就是纯文本 |
 | **单文件部署** | Flask + venv，systemd 一键起，无数据库、无额外负担 |
 
@@ -197,7 +199,7 @@ gemini-webapi>=2.1.1
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `GEMINI_SEEKER_API_KEY` | 空 | 客户端鉴权 key；空则不校验 |
-| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | 保留最近几轮 history |
+| `GEMINI_SEEKER_HISTORY_TURNS` | 3 | 折进 prompt 的最近轮数（更早的留给常驻会话） |
 | `GEMINI_POOL_PATH` | `/root/gemini-panel/accounts.json` | 账号池路径 |
 | `GEMINI_POOL_DEFAULT` | `A` | 默认用哪个号 |
 | `GEMINI_POOL_TTL` | 3 | 账号池缓存秒数 |
@@ -235,6 +237,7 @@ Anthropic 协议端点：`/v1/messages`。
 - **cookie 失效 → 极慢**：库走降级路径，一次要等几十秒。刷新 cookie 即恢复。
 - **并发**：同一时刻只允许一个请求进会话（已加锁）；客户端并发多发时其余会排队。
 - **usage 字段**：token 统计为 0（未实现），不影响功能。
+- **图片输入**：支持——OpenAI `image_url` / Anthropic `image` 块（data URL 与 http(s) 链接）。1x1 / 纯色小图 Gemini 可能识别不出，属正常。
 
 ## License
 
